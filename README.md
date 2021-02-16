@@ -15,7 +15,8 @@ Code does:
 6. Logs received events: 'TokensReceivedCalled', 'TokensToSendCalled'
 
 
-Tested using locally running [Hyperledger Besu](https://besu.hyperledger.org/en/stable/)
+Tested using locally running [Hyperledger Besu](https://besu.hyperledger.org/en/stable/) - [version](https://hub.docker.com/layers/hyperledger/besu/21.1/images/sha256-bd75bfbb2d0763f2576043620319fb840d224be8485867049c4252ec5e0b983d?context=explore)
+
 
 Solidity contracts were taken from [Openzeppelin](https://github.com/OpenZeppelin/openzeppelin-contracts)
 
