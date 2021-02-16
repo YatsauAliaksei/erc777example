@@ -1,12 +1,10 @@
 package by.mrj.besu.service;
 
-import by.mrj.besu.web3j.GodCredentials;
 import by.mrj.besu.web3j.Web3jClient;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.web3j.crypto.Credentials;
 import org.web3j.protocol.Web3j;
 import org.web3j.protocol.core.RemoteCall;
 import org.web3j.tx.Contract;

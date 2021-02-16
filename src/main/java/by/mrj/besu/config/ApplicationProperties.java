@@ -12,40 +12,18 @@ import java.util.List;
 @ConfigurationProperties(prefix = "token", ignoreUnknownFields = false)
 public class ApplicationProperties {
 
-  private Wallet wallet;
-  private String netUrl;
-  private String godKey;
-  private Contract contract;
+    private String netUrl;
+    private String godKey;
 
-  private int trxSleep;
-  private int trxAttempts;
+    private int trxSleep;
+    private int trxAttempts;
 
-  private List<NetContract> netContracts = new ArrayList<>();
-  private List<User> users = new ArrayList<>();
+    private List<NetContract> netContracts = new ArrayList<>();
 
-  @Getter
-  @Setter
-  public static class Wallet {
-    private String path;
-    private String password;
-  }
-
-  @Getter
-  @Setter
-  public static class NetContract {
-    private String name;
-    private String address;
-  }
-
-  @Getter
-  @Setter
-  public static class Contract {
-    private int limit;
-  }
-
-  @Getter
-  @Setter
-  public static class User {
-    private String privateKey;
-  }
+    @Getter
+    @Setter
+    public static class NetContract {
+        private String name;
+        private String address;
+    }
 }

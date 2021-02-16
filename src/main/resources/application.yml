@@ -1,0 +1,25 @@
+logging:
+  level:
+    ROOT: INFO
+
+token:
+  # That one is from ibft2Genesis.json file. ~90k eth
+  # Used as main app key aka God-key
+  godKey: c87509a1c067bbde78beb793e6fa76530b6382a4c0241e5e4a9ec0a0f44dc0d3
+
+  trxSleep: 2000
+  trxAttempts: 20
+
+  # default local address
+  netUrl: http://localhost:8545
+
+  # Network base contracts.
+  netContracts:
+    - name: ERC777Contract
+      # if not specified new will be created. Don't forget to save new address from logs
+      address:
+
+    - name: ERC777HookCheck
+      # if not specified new will be created. Don't forget to save new address from logs
+      address:
+

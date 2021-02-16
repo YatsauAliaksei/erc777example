@@ -1,30 +1,31 @@
 package by.mrj.besu.service;
 
-import by.mrj.besu.token.ContractService;
-import by.mrj.besu.token.STokenService;
-import by.mrj.besu.token.ScraperService;
+import by.mrj.besu.contract.ERC777HookCheck;
+import by.mrj.besu.contract.IERC1820Registry;
+import by.mrj.besu.token.Erc777HookCheckService;
+import by.mrj.besu.token.Erc777Service;
 import by.mrj.besu.web3j.GodCredentials;
 import by.mrj.besu.web3j.Web3jClient;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.Data;
+import io.reactivex.disposables.Disposable;
+import io.reactivex.internal.schedulers.NewThreadScheduler;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.web3j.abi.EventEncoder;
 import org.web3j.crypto.Credentials;
 import org.web3j.protocol.core.DefaultBlockParameter;
+import org.web3j.protocol.core.DefaultBlockParameterName;
 import org.web3j.protocol.core.Request;
+import org.web3j.protocol.core.methods.request.EthFilter;
 import org.web3j.protocol.core.methods.response.EthGetBalance;
-import org.web3j.tuples.generated.Tuple2;
+import org.web3j.protocol.core.methods.response.EthSendTransaction;
+import org.web3j.tx.ChainId;
+import org.web3j.tx.RawTransactionManager;
+import org.web3j.tx.gas.DefaultGasProvider;
 import org.web3j.utils.Numeric;
 
 import java.math.BigInteger;
-import java.time.Duration;
-import java.time.temporal.ChronoUnit;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
 @Component
@@ -32,112 +33,156 @@ import java.util.concurrent.ThreadLocalRandom;
 public class Checker {
 
     private final GodCredentials credentials;
-    private final STokenService sTokenTokenService;
-    private final ScraperService scraperService;
+    private final Erc777Service erc777Service;
+    private final Erc777HookCheckService erc777HookCheckService;
     private final AccountService accountService;
     private final Web3jClient web3jClient;
-    private final ContractService contractService;
-
-    private final Map<Integer, Tuple2<Double, Double>> cityCoordinates = new HashMap<>();
-
-    {
-        cityCoordinates.put(0, new Tuple2<>(50.064651, 19.944981));//  Krakow
-        cityCoordinates.put(1, new Tuple2<>(50.064651, 19.944981));// Krakow
-        cityCoordinates.put(2, new Tuple2<>(47.376888, 8.541694)); // Zurich
-        cityCoordinates.put(3, new Tuple2<>(1.289440, 103.849983)); // Singapore
-        cityCoordinates.put(4, new Tuple2<>(41.878113, -87.629799)); // Chicago
-        cityCoordinates.put(5, new Tuple2<>(48.135124, 11.581981)); // Munich
-    }
-
-
-    @Data
-    static class UserData {
-        int id;
-        String name;
-        int price;
-        int amount;
-        String geo;
-        String operation;
-    }
-
-    @Data
-    static class ClientData {
-        int id;
-        int tax;
-        String number;
-        int profit;
-    }
-
+    private final ERC1820RegistryDeploy erc1820RegistryDeploy;
+    private final TrxReceiptProcessor transactionReceiptProcessor;
 
     @SneakyThrows
     public void checkOperations() {
-        var random = ThreadLocalRandom.current();
 
-        while (true) {
-            var start = System.nanoTime();
-            scraperService.getScraperTesting().newAmount(BigInteger.valueOf(15)).sendAsync();
-            Thread.sleep(random.nextInt(100, 2000));
+        String registryAddress = erc1820RegistryDeploy.getRegistry().getContractAddress();
 
-            scraperService.getScraperTesting().newPrice(BigInteger.valueOf(38)).sendAsync();
-            Thread.sleep(random.nextInt(100, 3000));
+        EthFilter filterReg = new EthFilter(DefaultBlockParameterName.EARLIEST, DefaultBlockParameterName.LATEST, registryAddress);
+        filterReg.addSingleTopic(EventEncoder.encode(IERC1820Registry.INTERFACEIMPLEMENTERSET_EVENT));
 
-            ObjectMapper om = new ObjectMapper();
+        IERC1820Registry registry = erc1820RegistryDeploy.getRegistry();
 
-            var city = cityCoordinates.get(random.nextInt(6));
 
-            var ud = new UserData();
-            int id = random.nextInt(20);
-            ud.setId(id);
-            ud.setName(UUID.randomUUID().toString().substring(0, 3));
-            ud.setPrice(random.nextInt(40, 60));
-            ud.setAmount(random.nextInt(100));
-            ud.setOperation(random.nextBoolean() ? "BUY" : "SELL");
-            ud.setGeo(city.component1() + "," + city.component2());
+//        subscribeToInterfaceCreationEvents(filterReg, registry);
 
-            var cd = new ClientData();
-            cd.setId(id);
-            cd.setTax(random.nextInt(50, 300));
-            cd.setNumber(UUID.randomUUID().toString().substring(0, 7));
-            cd.setProfit((int) (ud.getAmount() * ud.getPrice() * random.nextDouble()));
+//        subscribeToPendingTransactionsEvents();
 
-            scraperService.getScraperTesting().submit(om.writeValueAsString(ud), om.writeValueAsBytes(cd)).sendAsync();
+        var client = createNewClient();
+        logBalance(client.getAddress());
 
-            Thread.sleep(random.nextInt(100, 3000));
+        ERC777HookCheck erc777HookCheck = erc777HookCheckService.getErc777HookCheck();
 
-            log.info("Time: {}", Duration.ofNanos(System.nanoTime() - start));
+        listenReceivedEvent(erc777HookCheck);
+        listenToSendEvent(erc777HookCheck);
+
+        var erc777Hook = erc777HookCheck.getContractAddress();
+
+        var trxMan = new RawTransactionManager(web3jClient.getWeb3j(), client, ChainId.NONE);
+        var setManagerFunction = registry.setManager(client.getAddress(), credentials.getCredentials().getAddress()).encodeFunctionCall();
+
+        EthSendTransaction ethSendTransaction = trxMan.sendTransaction(DefaultGasProvider.GAS_PRICE, DefaultGasProvider.GAS_LIMIT, registryAddress, setManagerFunction, BigInteger.ZERO);
+        if (ethSendTransaction.hasError()) {
+            log.error("Error: {}", ethSendTransaction.getError().getMessage());
+            throw new RuntimeException("Got error while setting manager");
         }
 
-//        long amount = 10L;
+        log.info("Register hook as sender for: {}", credentials.getCredentials().getAddress());
+        var rec1 = erc777HookCheck.senderFor(credentials.getCredentials().getAddress()).send();
 
-//        log.info("Starting check with amount - {}", amount);
+        log.info("Register hook as recipient for: {}", client.getAddress());
+        var rec2 = erc777HookCheck.recipientFor(client.getAddress()).send();
 
-        // INITIAL
-//        String newClientAddress = createNewClient();
-//        logBalance(newClientAddress);
+        transactionReceiptProcessor.waitForTransactionReceipt(ethSendTransaction.getTransactionHash());
+        checkManager(registry, client, erc777Hook);
 
-        // fixme: should be done in other way. Contract should be created initially and address saved.
-        // todo: Create mechanism which destroys contracts if they were not executed after specified time limit.
-//        log.info("BUY OP");
-//        contractService.createBuy(newClientAddress, amount, BigInteger.ONE).join().buy().send();
-//        logBalance(newClientAddress);
+        transactionReceiptProcessor.waitForTransactionReceipt(rec1.getTransactionHash());
+        transactionReceiptProcessor.waitForTransactionReceipt(rec2.getTransactionHash());
 
-/*        log.info("SELL OP");
-        contractService.createSell(newClientAddress, amount, BigInteger.ONE).join().sell().send();
-        logBalance(newClientAddress);
+        var recipientInterfaceHash = registry.interfaceHash("ERC777TokensRecipient").send();
+        setInterfaceImplementer(registry, client.getAddress(), erc777Hook, recipientInterfaceHash, "recipient");
 
-        // 2nd client
-        String newClientAddress1 = createNewClient();
-        logBalance(newClientAddress1);
+        var senderInterfaceHash = registry.interfaceHash("ERC777TokensSender").send();
+        setInterfaceImplementer(registry, credentials.getCredentials().getAddress(), erc777Hook, senderInterfaceHash, "sender");
 
-        // BUY
-        contractService.createBuy(newClientAddress, amount, BigInteger.ONE).join().buy().send();
-        logBalance(newClientAddress);
+        checkImplementor(registry, client, erc777Hook, recipientInterfaceHash);
+        checkImplementor(registry, credentials.getCredentials(), erc777Hook, senderInterfaceHash);
 
-        log.info("TRANSFER OP");
-        // TRANSFER
-        contractService.createTransfer(newClientAddress, newClientAddress1, amount).join().transfer().send();
-        logBalance(newClientAddress);
-        logBalance(newClientAddress1);*/
+        log.info("Before: {}", getTokenBalance(client.getAddress()));
+
+        int k = 1;
+        while (k-- > 0) {
+            var rec = erc777Service.getErc777Contract().send(client.getAddress(), BigInteger.TEN, "".getBytes()).send();
+            transactionReceiptProcessor.waitForTransactionReceipt(rec.getTransactionHash());
+
+            for (ERC777HookCheck.TokensReceivedCalledEventResponse tokensReceivedCalledEventResponse : erc777HookCheck.getTokensReceivedCalledEvents(rec)) {
+                log.info("TRX Receive event: {}", tokensReceivedCalledEventResponse);
+            }
+            for (ERC777HookCheck.TokensToSendCalledEventResponse tokensToSendCalledEventResponse : erc777HookCheck.getTokensToSendCalledEvents(rec)) {
+                log.info("TRX ToSend event: {}", tokensToSendCalledEventResponse);
+            }
+
+            log.info("After: {}", getTokenBalance(client.getAddress()));
+
+            Thread.sleep(3000);
+        }
+
+        log.info("Sleeping....");
+//        TimeUnit.SECONDS.sleep(30);
+    }
+
+    private Disposable subscribeToPendingTransactionsEvents() {
+        return web3jClient.getWeb3j().ethPendingTransactionHashFlowable().subscribe(s -> log.info("Pending: {}", s));
+    }
+
+    private Disposable subscribeToInterfaceCreationEvents(EthFilter filterReg, IERC1820Registry registry) {
+        return registry.interfaceImplementerSetEventFlowable(filterReg).subscribe(i -> log.info("Registering Interface: {}", i));
+    }
+
+    @SneakyThrows
+    private void setInterfaceImplementer(IERC1820Registry registry, String forAddress, String erc777Hook, byte[] functionHash, String interfaceName) {
+        log.info("Setting {}", interfaceName);
+        var receipt = registry.setInterfaceImplementer(forAddress, functionHash, erc777Hook).send();
+
+        if (!receipt.isStatusOK()) {
+            log.error("Receipt NOT OK", receipt.getLogs());
+            throw new RuntimeException(interfaceName + " failed");
+        }
+
+        log.info("Waiting for {} interface creation for: {}", interfaceName, receipt.getTransactionHash());
+        transactionReceiptProcessor.waitForTransactionReceipt(receipt.getTransactionHash());
+    }
+
+    private void checkManager(IERC1820Registry registry, Credentials client, String erc777Hook) throws Exception {
+        var manager = registry.getManager(client.getAddress()).send();
+        log.info("Manager: {}", manager);
+
+        if (!Numeric.cleanHexPrefix(manager).equals(Numeric.cleanHexPrefix(credentials.getCredentials().getAddress()))) {
+            log.error("Still not a manager.\n{}\n{}", client.getAddress(), erc777Hook);
+            throw new RuntimeException();
+        }
+    }
+
+    private Disposable listenToSendEvent(ERC777HookCheck erc777HookCheck) {
+        log.info("Setting listener for Send event");
+
+        return erc777HookCheck.tokensToSendCalledEventFlowable(DefaultBlockParameterName.EARLIEST, DefaultBlockParameterName.LATEST)
+            .subscribeOn(new NewThreadScheduler())
+            .subscribe(
+                (event) -> log.info("ToSend event:\nfrom: {}\nto: {}\ntoken: {}", event.from, event.to, event.token),
+                throwable -> {
+                    log.error("Can't create Send listener", throwable);
+                    throw new RuntimeException(throwable);
+                },
+                () -> log.info("Completed!"));
+    }
+
+    private Disposable listenReceivedEvent(ERC777HookCheck erc777HookCheck) {
+        log.info("Setting listener for Received event: {}", erc777HookCheckService.getAddress());
+
+        return erc777HookCheck.tokensReceivedCalledEventFlowable(DefaultBlockParameterName.EARLIEST, DefaultBlockParameterName.LATEST)
+            .subscribe((event) -> log.info("Received event:\nfrom: {}\nto: {}\namount: {}", event.from, event.to, event.amount),
+                throwable -> {
+                    log.error("Can't create Receive listener", throwable);
+                    throw new RuntimeException(throwable);
+                },
+                () -> log.info("Completed!"));
+    }
+
+    private void checkImplementor(IERC1820Registry registry, Credentials credentials, String erc777Hook, byte[] h2) throws Exception {
+        String implementorAddress = registry.getInterfaceImplementer(credentials.getAddress(), h2).send();
+
+        if (!Numeric.cleanHexPrefix(erc777Hook).equals(Numeric.cleanHexPrefix(implementorAddress))) {
+            log.error("Still not a Implementor.\n{}\n{}", implementorAddress, erc777Hook);
+            throw new RuntimeException();
+        }
     }
 
     private void logBalance(String address) throws Exception {
@@ -146,17 +191,17 @@ public class Checker {
         log.info("\nAddress: {}\nBalance ETH: [{}], TokenToken: [{}]", address, ethBalance, tokenBalance);
     }
 
-    private String createNewClient() {
+    private Credentials createNewClient() {
         Credentials newUserCredentials = accountService.createCredentials();
         String newClientAddress = newUserCredentials.getAddress();
 
         BigInteger privateKey = credentials.getCredentials().getEcKeyPair().getPrivateKey();
         log.info("New client address [{}] private [{}]", newClientAddress, Numeric.toHexStringNoPrefix(privateKey));
-        return newClientAddress;
+        return newUserCredentials;
     }
 
     private BigInteger getTokenBalance(String address) throws Exception {
-        return sTokenTokenService.getSToken().balanceOf(address).send();
+        return erc777Service.getErc777Contract().balanceOf(address).send();
     }
 
     private BigInteger getEthBalance(String a) throws java.io.IOException {

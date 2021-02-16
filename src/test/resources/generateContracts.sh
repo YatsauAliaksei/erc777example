@@ -9,21 +9,21 @@ if [ -z "$(ls -A contracts/compiled)" ]; then
    exit
 fi
 
-GOLD_CONTRACTS=(
-          ERC777HookCheck
+CONTRACTS=(
+          ERC777HookCheck ERC777Contract
 )
 #          SToken STokenSell
 #          STokenBuy STokenTransfer STokenExecutor
 
-COMMON_CONTRACTS=( ERC1820Registry )
+#COMMON_CONTRACTS=( ERC1820Registry )
 
-for item in ${GOLD_CONTRACTS[*]}
+for item in ${CONTRACTS[*]}
     do
-        web3j solidity generate -a=contracts/compiled/$item.abi -b=contracts/compiled/$item.bin -o=../../main/java/ -p=by.mrj.besu.token.contract
+        web3j generate solidity contracts/compiled/$item.bin contracts/compiled/$item.abi -p by.mrj.besu.token.contract -o '../../main/java/'
     done
 
-for item in ${COMMON_CONTRACTS[*]}
-    do
-        web3j solidity generate -a=contracts/compiled/$item.abi -b=contracts/compiled/$item.bin -o=../../main/java/ -p=by.mrj.besu.contract
-    done
+#for item in ${COMMON_CONTRACTS[*]}
+#    do
+#        web3j solidity generate -a=contracts/compiled/$item.abi -b=contracts/compiled/$item.bin -o=../../main/java/ -p=by.mrj.besu.contract
+#    done
 
