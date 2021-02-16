@@ -20,7 +20,6 @@ public class SpringBootApp {
             .sources(SpringBootApp.class)
             .bannerMode(Banner.Mode.OFF)
             .registerShutdownHook(true)
-//            .profiles("dev")
             .build()
             .run(args);
 

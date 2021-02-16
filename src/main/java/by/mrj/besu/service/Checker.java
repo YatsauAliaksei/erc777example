@@ -26,6 +26,8 @@ import org.web3j.tx.gas.DefaultGasProvider;
 import org.web3j.utils.Numeric;
 
 import java.math.BigInteger;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Component
@@ -44,15 +46,9 @@ public class Checker {
     public void checkOperations() {
 
         String registryAddress = erc1820RegistryDeploy.getRegistry().getContractAddress();
-
-        EthFilter filterReg = new EthFilter(DefaultBlockParameterName.EARLIEST, DefaultBlockParameterName.LATEST, registryAddress);
-        filterReg.addSingleTopic(EventEncoder.encode(IERC1820Registry.INTERFACEIMPLEMENTERSET_EVENT));
-
         IERC1820Registry registry = erc1820RegistryDeploy.getRegistry();
 
-
-//        subscribeToInterfaceCreationEvents(filterReg, registry);
-
+//        subscribeToInterfaceCreationEvents(registry);
 //        subscribeToPendingTransactionsEvents();
 
         var client = createNewClient();
@@ -75,16 +71,16 @@ public class Checker {
         }
 
         log.info("Register hook as sender for: {}", credentials.getCredentials().getAddress());
-        var rec1 = erc777HookCheck.senderFor(credentials.getCredentials().getAddress()).send();
+        var senderForReceipt = erc777HookCheck.senderFor(credentials.getCredentials().getAddress()).send();
 
         log.info("Register hook as recipient for: {}", client.getAddress());
-        var rec2 = erc777HookCheck.recipientFor(client.getAddress()).send();
+        var recipientForReceipt = erc777HookCheck.recipientFor(client.getAddress()).send();
 
         transactionReceiptProcessor.waitForTransactionReceipt(ethSendTransaction.getTransactionHash());
         checkManager(registry, client, erc777Hook);
 
-        transactionReceiptProcessor.waitForTransactionReceipt(rec1.getTransactionHash());
-        transactionReceiptProcessor.waitForTransactionReceipt(rec2.getTransactionHash());
+        transactionReceiptProcessor.waitForTransactionReceipt(senderForReceipt.getTransactionHash());
+        transactionReceiptProcessor.waitForTransactionReceipt(recipientForReceipt.getTransactionHash());
 
         var recipientInterfaceHash = registry.interfaceHash("ERC777TokensRecipient").send();
         setInterfaceImplementer(registry, client.getAddress(), erc777Hook, recipientInterfaceHash, "recipient");
@@ -97,32 +93,41 @@ public class Checker {
 
         log.info("Before: {}", getTokenBalance(client.getAddress()));
 
-        int k = 1;
-        while (k-- > 0) {
-            var rec = erc777Service.getErc777Contract().send(client.getAddress(), BigInteger.TEN, "".getBytes()).send();
+        var random = ThreadLocalRandom.current();
+
+        var transfersNum = 5;
+        while (transfersNum-- > 0) {
+            var rec = erc777Service.getErc777Contract().send(client.getAddress(), BigInteger.valueOf(random.nextLong(1, 10)),
+                "".getBytes()).send();
             transactionReceiptProcessor.waitForTransactionReceipt(rec.getTransactionHash());
 
-            for (ERC777HookCheck.TokensReceivedCalledEventResponse tokensReceivedCalledEventResponse : erc777HookCheck.getTokensReceivedCalledEvents(rec)) {
-                log.info("TRX Receive event: {}", tokensReceivedCalledEventResponse);
-            }
-            for (ERC777HookCheck.TokensToSendCalledEventResponse tokensToSendCalledEventResponse : erc777HookCheck.getTokensToSendCalledEvents(rec)) {
-                log.info("TRX ToSend event: {}", tokensToSendCalledEventResponse);
-            }
+//            logTrxEvents(erc777HookCheck, rec);
 
             log.info("After: {}", getTokenBalance(client.getAddress()));
 
-            Thread.sleep(3000);
+            TimeUnit.MILLISECONDS.sleep(random.nextInt(100, 3000));
         }
 
-        log.info("Sleeping....");
-//        TimeUnit.SECONDS.sleep(30);
+        log.info("Finished.");
+    }
+
+    private void logTrxEvents(ERC777HookCheck erc777HookCheck, org.web3j.protocol.core.methods.response.TransactionReceipt rec) {
+        for (ERC777HookCheck.TokensReceivedCalledEventResponse tokensReceivedCalledEventResponse : erc777HookCheck.getTokensReceivedCalledEvents(rec)) {
+            log.info("TRX Receive event: {}", tokensReceivedCalledEventResponse);
+        }
+
+        for (ERC777HookCheck.TokensToSendCalledEventResponse tokensToSendCalledEventResponse : erc777HookCheck.getTokensToSendCalledEvents(rec)) {
+            log.info("TRX ToSend event: {}", tokensToSendCalledEventResponse);
+        }
     }
 
     private Disposable subscribeToPendingTransactionsEvents() {
         return web3jClient.getWeb3j().ethPendingTransactionHashFlowable().subscribe(s -> log.info("Pending: {}", s));
     }
 
-    private Disposable subscribeToInterfaceCreationEvents(EthFilter filterReg, IERC1820Registry registry) {
+    private Disposable subscribeToInterfaceCreationEvents(IERC1820Registry registry) {
+        EthFilter filterReg = new EthFilter(DefaultBlockParameterName.EARLIEST, DefaultBlockParameterName.LATEST, registry.getContractAddress());
+        filterReg.addSingleTopic(EventEncoder.encode(IERC1820Registry.INTERFACEIMPLEMENTERSET_EVENT));
         return registry.interfaceImplementerSetEventFlowable(filterReg).subscribe(i -> log.info("Registering Interface: {}", i));
     }
 
@@ -156,7 +161,7 @@ public class Checker {
         return erc777HookCheck.tokensToSendCalledEventFlowable(DefaultBlockParameterName.EARLIEST, DefaultBlockParameterName.LATEST)
             .subscribeOn(new NewThreadScheduler())
             .subscribe(
-                (event) -> log.info("ToSend event:\nfrom: {}\nto: {}\ntoken: {}", event.from, event.to, event.token),
+                (event) -> log.info("ToSend event:\nfrom: {}\nto: {}\namount: {}", event.from, event.to, event.amount),
                 throwable -> {
                     log.error("Can't create Send listener", throwable);
                     throw new RuntimeException(throwable);

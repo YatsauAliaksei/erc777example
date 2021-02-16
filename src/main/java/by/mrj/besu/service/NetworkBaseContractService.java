@@ -30,6 +30,7 @@ public class NetworkBaseContractService {
     private final String erc777HookAddress;
 
     @SneakyThrows
+    // using simple sync way to avoid problems with 'nonce'
     public NetworkBaseContractService(ApplicationProperties applicationProperties, Web3jClient web3jClient,
                                       GodCredentials credentials, ERC1820RegistryDeploy erc1820RegistryDeploy) {
 
@@ -45,8 +46,7 @@ public class NetworkBaseContractService {
 
             try {
                 return ERC777Contract.deploy(web3jClient.getWeb3j(), credentials.getCredentials(), new DefaultGasProvider(),
-                    godAddress,
-                    new BigInteger("1000000000000000000"), "ERC777 ", "erc777", Lists.newArrayList()).send();
+                    godAddress, BigInteger.valueOf(100000L), "ERC777 ", "erc777", Lists.newArrayList()).send();
             } catch (Exception e) {
                 log.error("Error creating erc777", e);
                 throw new RuntimeException(e);
